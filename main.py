@@ -99,6 +99,23 @@ def parse_similar_diff(diff_text):
     return result
 
 
+def strip_similar_from_mnemonic(mnemonic):
+    """Cắt bỏ phần '🔍 Dễ nhầm...' khỏi mnemonic."""
+    if not mnemonic:
+        return mnemonic
+
+    # Các marker bắt đầu phần "Dễ nhầm"
+    markers = ['\n🔍', '\n📌', '\n\n🔍', '\n\n📌', '\n\n🔍 Dễ nhầm']
+
+    cut_idx = len(mnemonic)
+    for marker in markers:
+        idx = mnemonic.find(marker)
+        if idx != -1 and idx < cut_idx:
+            cut_idx = idx
+
+    return mnemonic[:cut_idx].rstrip()
+
+
 def analyze_char(char):
     if not char or len(char) != 1:
         return None
@@ -137,9 +154,10 @@ def analyze_char(char):
                 for c in comps[:8]
             ]
 
-        # ═══ Mẹo nhớ ═══
+        # ═══ Mẹo nhớ — cắt bỏ "Dễ nhầm" ═══
         mnemonic = generate_mnemonic(char)
         if mnemonic:
+            mnemonic = strip_similar_from_mnemonic(mnemonic)
             result['mnemonic'] = mnemonic
 
         # ═══ Chữ dễ nhầm — parse pinyin + nghĩa ═══
@@ -183,16 +201,12 @@ def health():
     return jsonify({
         'ok': True,
         'has_vocab': HAS_VOCAB,
-        'version': '1.2',
+        'version': '1.3',
     })
 
 
 @app.route('/debug')
 def debug():
-    """
-    Debug data raw — test trên browser điện thoại.
-    /debug?char=爱
-    """
     ch = request.args.get('char', '').strip()
     if not ch:
         return jsonify({'error': 'Missing ?char=...'})
@@ -200,6 +214,8 @@ def debug():
     similar_raw = None
     diff_text = ''
     parsed = {}
+    mnemonic_raw = ''
+    mnemonic_stripped = ''
     error = None
 
     try:
@@ -207,6 +223,8 @@ def debug():
         if similar_raw:
             diff_text = similar_raw.get('diff', '')
             parsed = parse_similar_diff(diff_text)
+        mnemonic_raw = generate_mnemonic(ch) or ''
+        mnemonic_stripped = strip_similar_from_mnemonic(mnemonic_raw)
     except Exception as e:
         error = str(e)
 
@@ -217,12 +235,12 @@ def debug():
         'similar_raw': similar_raw,
         'diff_text': diff_text,
         'parsed': parsed,
+        'mnemonic_raw': mnemonic_raw,
+        'mnemonic_stripped': mnemonic_stripped,
         'pinyin_test': {
             '爱': get_pinyin('爱'),
             '受': get_pinyin('受'),
             '爰': get_pinyin('爰'),
-            '很': get_pinyin('很'),
-            '恨': get_pinyin('恨'),
         }
     })
 
@@ -261,13 +279,13 @@ def analyze():
 def analyze_batch():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        chars = data.get('chars', [])
+        chars = data.get('你chars', [])
 
-        if not isinstance(chars, list):
-            return jsonify({'ok': False, 'error': 'chars must be array'}), 400
+        if not isinstance(chars, list')):
+            return jsonify({'ok': False, 'error">': 'chars must be array'}), 400
 
-        if len(chars) > 20:
-            return jsonify({'ok': False, 'error': 'Max 20 chars'}), 400
+你        if len(chars) > 20:
+</            return jsonify({'ok': False, 'error': 'Max 20 chars'}), 400
 
         result = {}
         for ch in chars:
@@ -330,11 +348,11 @@ a { color: #4f46e5; }
 <div>
 <span class="example" onclick="go('权')">权</span>
 <span class="example" onclick="go('管')">管</span>
-<span class="example" onclick="go('你')">你</span>
+<span class="example" onclick="go('span>
 <span class="example" onclick="go('爱')">爱</span>
-<span class="example" onclick="go(';">想')">想</span>
-<spanKh class="example" onclick="go('明')">明ông</span>
-<span class="example" onclick=" cógo('海')">海 dữ liệu thành phần</p</span>
+<span class="example" onclick="go('想')">想</span>
+<span class="example" onclick="go('明')">明</span>
+<span class="example" onclick="go('海')">海</span>
 <span class="example" onclick="go('花')">花</span>
 <span class="example" onclick="go('很')">很</span>
 <span class="example" onclick="go('天')">天</span>
@@ -400,7 +418,7 @@ a { color: #4f46e5; }
                 '</div>'
             )
     else:
-        comps_html = '<p style="color:#999>'
+        comps_html = '<p style="color:#999;">Không có dữ liệu thành phần</p>'
 
     rad_html = ''
     if rad:
@@ -415,7 +433,7 @@ a { color: #4f46e5; }
         rad_html = '<p style="color:#999;">Không xác định</p>'
 
     similar_html = ''
-    if similar and 'Dễ nhầm' not in mnemonic:
+    if similar:
         sim_list = similar.get('list') or []
         if sim_list:
             cards_html = ''
@@ -472,10 +490,15 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
             color: #1d4ed8; line-height: 1; }
 .rad-name { font-size: 1rem; font-weight: 700; color: #1d4ed8;
             background: #dbeafe; padding: .25rem .6rem; border-radius: 6px; }
-.rad-meaning { font-size: .95rem; color: #374151; }
-.comp-item { display: flex; align-items: center; gap: .75rem;
-             padding: .6rem .75rem; border-radius: 8px;
-             background: #f9fafb; margin-bottom: .5rem; }
+.rad-meaning { font-size=: .95rem; color: #374151; }
+500.comp-item { display: flex; align-items:0 center; gap: .75rem;
+            )
+ padding: .6rem .75rem; border-radius```
+
+: 8px;
+             background: #f9---
+
+fafb; margin-bottom: .5rem; }
 .comp-item:last-child { margin-bottom: 0; }
 .comp-char { font-size: 1.75rem; font-weight: 700; min-width: 1.5em;
              font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -490,14 +513,13 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
                padding: .85rem 1rem; border-radius: 8px; margin-top: .75rem; }
 .similar-title { font-weight: 700; color: #b91c1c; font-size: .9rem;
                  margin-bottom: .6rem; }
-.similar-cards { " display: flex; gap: .6rem; flex爰-wrap: wrap; }
+.similar-cards { display: flex; gap: .6rem; flex-wrap: wrap; }
 .similar-card {
-":    display: flex;
-    flex-direction ": column;
-    align-items: centeryu;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     min-width: 80px;
-án    padding: .65rem .75rem",
-;
+    padding: .65rem .75rem;
     background: #fff;
     border: 2px solid #fecaca;
     border-radius: 10px;
@@ -574,7 +596,7 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
 def index():
     return jsonify({
         'name': 'Chinese Vocab Analysis API',
-        'version': '1.2',
+        'version': '1.3',
         'endpoints': {
             'health': 'GET /health',
             'test': 'GET /test?char=权',
@@ -586,4 +608,18 @@ def index():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port## 📋 Những gì đã thay đổi
+
+| # | Sửa gì |
+|---|--------|
+| 1 | Thêm hàm `strip_similar_from_mnemonic()` — cắt "🔍 Dễ nhầm" khỏi mnemonic |
+| 2 | `analyze_char()` — gọi hàm trên khi lấy mnemonic |
+| 3 | Route `/test` — **luôn hiện box card** similar (bỏ điều kiện `'Dễ nhầm' not in mnemonic`) |
+| 4 | Route `/debug` — thêm `mnemonic_raw` + `mnemonic_stripped` để so sánh |
+| 5 | Version `1.2` → `1.3` |
+
+---
+
+## 🎯 Sau khi push lên GitHub
+
+Đợi Render deploy (~2 phút), test:
