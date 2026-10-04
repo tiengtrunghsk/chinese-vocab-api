@@ -12,6 +12,7 @@ from flask_cors import CORS
 from pypinyin import pinyin, Style
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,6 +39,9 @@ app = Flask(__name__)
 CORS(app)
 
 
+# ═══════════════════════════════════════════════════════════════
+#  HELPER
+# ═══════════════════════════════════════════════════════════════
 def get_pinyin(char):
     if not char:
         return ''
@@ -48,6 +52,54 @@ def get_pinyin(char):
     except Exception:
         pass
     return ''
+
+
+def parse_similar_diff(diff_text):
+    """
+    Parse chuỗi diff thành dict.
+    Input:  "爱=yêu (爫+冖+友); 受=nhận (爫+冖+又); 爰=viện"
+    Output: {
+        "爱": {"meaning": "yêu", "breakdown": "爫+冖+友"},
+        "受": {"meaning": "nhận", "breakdown": "爫+冖+又"},
+        "爰": {"meaning": "viện", "breakdown": ""}
+    }
+    """
+    result = {}
+    if not diff_text:
+        return result
+
+    # Tách theo dấu ;
+    parts = [p.strip() for p in diff_text.split(';')]
+
+    for p in parts:
+        if '=' not in p:
+            continue
+
+        # Tách hanzi và phần còn lại
+        ch_part, rest = p.split('=', 1)
+        ch_part = ch_part.strip()
+
+        if len(ch_part) != 1 or not ('\u4e00' <= ch_part <= '\u9fff'):
+            continue
+
+        # Parse nghĩa + chiết tự
+        # Format: "yêu (爫+冖+友)" hoặc "viện"
+        meaning = rest.strip()
+        breakdown = ''
+
+        m = re.match(r'^([^(]+?)\s*\(([^)]+)\)\s*$', rest.strip())
+        if m:
+            meaning = m.group(1).strip()
+            breakdown = m.group(2).strip()
+        else:
+            meaning = rest.strip()
+
+        result[ch_part] = {
+            'meaning': meaning,
+            'breakdown': breakdown,
+        }
+
+    return result
 
 
 def analyze_char(char):
@@ -64,6 +116,7 @@ def analyze_char(char):
             'pinyin': get_pinyin(char),
         }
 
+        # ═══ Bộ thủ chính ═══
         main_rad = get_radical_for_word(char)
         if main_rad:
             result['radical'] = {
@@ -74,6 +127,7 @@ def analyze_char(char):
                 'position': main_rad.get('position', ''),
             }
 
+        # ═══ Thành phần ═══
         comps = _split_components(char)
         if comps:
             result['components'] = [
@@ -86,13 +140,36 @@ def analyze_char(char):
                 for c in comps[:8]
             ]
 
+        # ═══ Mẹo nhớ ═══
         mnemonic = generate_mnemonic(char)
         if mnemonic:
             result['mnemonic'] = mnemonic
 
+        # ═══ Chữ dễ nhầm — parse đầy đủ ═══
         similar = find_similar_chars(char)
         if similar:
-            result['similar'] = similar
+            sim_list = similar.get('similar') or []
+            diff = similar.get('diff') or ''
+
+            parsed = parse_similar_diff(diff)
+
+            similar_full = []
+            for ch in sim_list:
+                ch = str(ch).strip()
+                if not ch or len(ch) != 1:
+                    continue
+                info = parsed.get(ch, {})
+                similar_full.append({
+                    'char': ch,
+                    'pinyin': get_pinyin(ch),
+                    'meaning': info.get('meaning', ''),
+                    'breakdown': info.get('breakdown', ''),
+                })
+
+            result['similar'] = {
+                'list': similar_full,
+                'diff': diff,
+            }
 
         return result
 
@@ -109,7 +186,7 @@ def health():
     return jsonify({
         'ok': True,
         'has_vocab': HAS_VOCAB,
-        'version': '1.0',
+        'version': '1.1',
     })
 
 
@@ -222,8 +299,10 @@ a { color: #4f46e5; }
 <span class="example" onclick="go('明')">明</span>
 <span class="example" onclick="go('海')">海</span>
 <span class="example" onclick="go('花')">花</span>
-<span class="example" onclick="go('好')">好</span>
-<span class="example" onclick="go('学')">学</span>
+<span class="example" onclick="go('很')">很</span>
+<span class="example" onclick="go('天')">天</span>
+<span class="example" onclick="go('未')">未</span>
+<span class="example" onclick="go('妈')">妈</span>
 </div>
 <script>
 function go(c) {
@@ -286,7 +365,7 @@ a { color: #4f46e5; }
     else:
         comps_html = '<p style="color:#999;">Không có dữ liệu thành phần</p>'
 
-    # ═══ Render radical badge ═══
+    # ═══ Render radical ═══
     rad_html = ''
     if rad:
         rad_html = (
@@ -299,24 +378,31 @@ a { color: #4f46e5; }
     else:
         rad_html = '<p style="color:#999;">Không xác định</p>'
 
-    # ═══ Render similar box — CHỈ khi mnemonic CHƯA có sẵn ═══
+    # ═══ Render similar cards ═══
     similar_html = ''
     if similar and 'Dễ nhầm' not in mnemonic:
-        sim_list = similar.get('similar') or []
-        diff = similar.get('diff') or ''
+        sim_list = similar.get('list') or []
         if sim_list:
-            sim_chars = ''.join(
-                '<span class="similar-char">' + str(c) + '</span>'
-                for c in sim_list
-            )
+            cards_html = ''
+            for item in sim_list:
+                c = item.get('char', '')
+                py = item.get('pinyin', '')
+                vi = item.get('meaning', '')
+                bd = item.get('breakdown', '')
+                cards_html += (
+                    '<div class="similar-card">'
+                    '<div class="sim-char">' + c + '</div>'
+                    '<div class="sim-py">' + (py or '') + '</div>'
+                    '<div class="sim-vi">' + (vi or '') + '</div>'
+                    + (('<div class="sim-bd">' + bd + '</div>') if bd else '') +
+                    '</div>'
+                )
             similar_html = (
                 '<div class="similar-box">'
                 '<div class="similar-title">🔍 Dễ nhầm</div>'
-                '<div class="similar-chars">' + sim_chars + '</div>'
+                '<div class="similar-cards">' + cards_html + '</div>'
+                '</div>'
             )
-            if diff:
-                similar_html += '<div class="similar-diff">📌 ' + diff + '</div>'
-            similar_html += '</div>'
 
     # ═══ Escape mnemonic ═══
     mnemonic_escaped = (mnemonic
@@ -367,15 +453,58 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
                 padding: .85rem 1rem; border-radius: 8px;
                 font-size: .95rem; color: #78350f; line-height: 1.7; }
 .similar-box { background: #fef2f2; border-left: 4px solid #ef4444;
-               padding: .75rem 1rem; border-radius: 8px; margin-top: .75rem; }
-.similar-title { font-weight: 700; color: #b91c1c; font-size: .85rem;
-                 margin-bottom: .5rem; }
-.similar-chars { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .5rem; }
-.similar-char { font-size: 1.5rem; font-weight: 700; padding: .25rem .6rem;
-                background: #fff; border-radius: 6px;
-                font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
-                border: 1px solid #fecaca; }
-.similar-diff { font-size: .85rem; color: #7f1d1d; }
+               padding: .85rem 1rem; border-radius: 8px; margin-top: .75rem; }
+.similar-title { font-weight: 700; color: #b91c1c; font-size: .9rem;
+                 margin-bottom: .6rem; }
+.similar-cards { display: flex; gap: .6rem; flex-wrap: wrap; }
+.similar-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 80px;
+    padding: .65rem .75rem;
+    background: #fff;
+    border: 2px solid #fecaca;
+    border-radius: 10px;
+    transition: all .15s;
+}
+.similar-card:hover {
+    transform: translateY(-3px);
+    border-color: #ef4444;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, .15);
+}
+.sim-char {
+    font-size: 2rem;
+    font-weight: 700;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #111827;
+    line-height: 1;
+    margin-bottom: .3rem;
+}
+.sim-py {
+    font-size: .8rem;
+    font-style: italic;
+    color: #6b7280;
+    margin-bottom: .25rem;
+}
+.sim-vi {
+    font-size: .78rem;
+    color: #b91c1c;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: .2rem;
+}
+.sim-bd {
+    font-size: .65rem;
+    color: #9ca3af;
+    text-align: center;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.3;
+    padding-top: .2rem;
+    border-top: 1px dashed #e5e7eb;
+    margin-top: .2rem;
+    width: 100%;
+}
 .back-btn { display: inline-block; margin-top: 1rem; padding: .6rem 1.2rem;
             background: #4f46e5; color: #fff; border-radius: 8px;
             font-weight: 600; text-decoration: none; }
@@ -410,7 +539,7 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
 def index():
     return jsonify({
         'name': 'Chinese Vocab Analysis API',
-        'version': '1.0',
+        'version': '1.1',
         'endpoints': {
             'health': 'GET /health',
             'test': 'GET /test?char=权',
