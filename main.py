@@ -7,6 +7,7 @@ from pypinyin import pinyin, Style
 import os
 import re
 import sys
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -145,94 +146,11 @@ def analyze_char(char):
         return None
 
 
-@app.route('/health')
-def health():
-    return jsonify({
-        'ok': True,
-        'has_vocab': HAS_VOCAB,
-        'version': '1.3',
-    })
-
-
-@app.route('/debug')
-def debug():
-    ch = request.args.get('char', '').strip()
-    if not ch:
-        return jsonify({'error': 'Missing ?char=...'})
-    similar_raw = None
-    diff_text = ''
-    parsed = {}
-    mnemonic_raw = ''
-    mnemonic_stripped = ''
-    error = None
-    try:
-        similar_raw = find_similar_chars(ch)
-        if similar_raw:
-            diff_text = similar_raw.get('diff', '')
-            parsed = parse_similar_diff(diff_text)
-        mnemonic_raw = generate_mnemonic(ch) or ''
-        mnemonic_stripped = strip_similar_from_mnemonic(mnemonic_raw)
-    except Exception as e:
-        error = str(e)
-    return jsonify({
-        'char': ch,
-        'has_vocab': HAS_VOCAB,
-        'error': error,
-        'similar_raw': similar_raw,
-        'diff_text': diff_text,
-        'parsed': parsed,
-        'mnemonic_raw': mnemonic_raw,
-        'mnemonic_stripped': mnemonic_stripped,
-    })
-
-
-@app.route('/analyze', methods=['POST'])
-def analyze():
-    try:
-        data = request.get_json(force=True, silent=True) or {}
-        char = data.get('char', '').strip()
-        if not char:
-            return jsonify({'ok': False, 'error': 'Missing char'}), 400
-        if len(char) != 1:
-            return jsonify({'ok': False, 'error': 'Only 1 char'}), 400
-        result = analyze_char(char)
-        if not result:
-            return jsonify({
-                'ok': False, 'error': 'Analysis failed', 'char': char
-            }), 500
-        return jsonify({'ok': True, 'data': result})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-@app.route('/analyze_batch', methods=['POST'])
-def analyze_batch():
-    try:
-        data = request.get_json(force=True, silent=True) or {}
-        chars = data.get('chars', [])
-        if not isinstance(chars, list):
-            return jsonify({'ok': False, 'error': 'chars must be array'}), 400
-        if len(chars) > 20:
-            return jsonify({'ok': False, 'error': 'Max 20 chars'}), 400
-        result = {}
-        for ch in chars:
-            ch = str(ch).strip()
-            if not ch or len(ch) != 1:
-                continue
-            if ch in result:
-                continue
-            analysis = analyze_char(ch)
-            if analysis:
-                result[ch] = analysis
-        return jsonify({'ok': True, 'data': result})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-@app.route('/test')
-def test_get():
-    ch = request.args.get('char', '').strip()
-
+# ═══════════════════════════════════════════════════════════════
+#  HTML HELPER
+# ═══════════════════════════════════════════════════════════════
+def render_test_page(ch):
+    """Render trang /test — tách riêng để bọc try/except."""
     if not ch:
         return '''<!DOCTYPE html>
 <html>
@@ -276,12 +194,12 @@ a{color:#4f46e5}
 </html>'''
 
     if len(ch) != 1:
-        return jsonify({'ok': False, 'error': 'Chỉ nhập 1 ký tự'}), 400
+        return '<h1>Chỉ nhập 1 ký tự</h1><p><a href="/test">← Quay lại</a></p>'
 
     result = analyze_char(ch)
 
     if not result:
-        return '<h2>❌ Không phân tích được: ' + ch + '</h2><p><a href="/test">← Thử chữ khác</a></p>', 500
+        return '<h1>❌ Không phân tích được: ' + ch + '</h1><p><a href="/test">← Thử chữ khác</a></p>'
 
     rad = result.get('radical') or {}
     comps = result.get('components') or []
@@ -301,7 +219,6 @@ a{color:#4f46e5}
     if not comps_html:
         comps_html = '<p style="color:#999">Không có dữ liệu</p>'
 
-    rad_html = ''
     if rad:
         rad_html = (
             '<div class="radical-box">'
@@ -337,11 +254,11 @@ a{color:#4f46e5}
             '</div>'
         )
 
-    mnemonic_esc = (mnemonic
-                    .replace('&', '&amp;')
-                    .replace('<', '&lt;')
-                    .replace('>', '&gt;')
-                    .replace('\n', '<br>'))
+    mnem_esc = (mnemonic
+                .replace('&', '&amp;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;')
+                .replace('\n', '<br>'))
 
     return '''<!DOCTYPE html>
 <html>
@@ -399,11 +316,115 @@ h1{color:#4f46e5;font-size:1.3rem}
 </html>'''
 
 
+# ═══════════════════════════════════════════════════════════════
+#  ROUTES
+# ═══════════════════════════════════════════════════════════════
+@app.route('/health')
+def health():
+    return jsonify({
+        'ok': True,
+        'has_vocab': HAS_VOCAB,
+        'version': '1.4',
+    })
+
+
+@app.route('/debug')
+def debug():
+    try:
+        ch = request.args.get('char', '').strip()
+        if not ch:
+            return jsonify({'error': 'Missing ?char=...'})
+        similar_raw = None
+        diff_text = ''
+        parsed = {}
+        mnemonic_raw = ''
+        mnemonic_stripped = ''
+        error = None
+        try:
+            similar_raw = find_similar_chars(ch)
+            if similar_raw:
+                diff_text = similar_raw.get('diff', '')
+                parsed = parse_similar_diff(diff_text)
+            mnemonic_raw = generate_mnemonic(ch) or ''
+            mnemonic_stripped = strip_similar_from_mnemonic(mnemonic_raw)
+        except Exception as e:
+            error = str(e)
+        return jsonify({
+            'char': ch,
+            'has_vocab': HAS_VOCAB,
+            'error': error,
+            'similar_raw': similar_raw,
+            'diff_text': diff_text,
+            'parsed': parsed,
+            'mnemonic_raw': mnemonic_raw,
+            'mnemonic_stripped': mnemonic_stripped,
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        char = data.get('char', '').strip()
+        if not char:
+            return jsonify({'ok': False, 'error': 'Missing char'}), 400
+        if len(char) != 1:
+            return jsonify({'ok': False, 'error': 'Only 1 char'}), 400
+        result = analyze_char(char)
+        if not result:
+            return jsonify({
+                'ok': False, 'error': 'Analysis failed', 'char': char
+            }), 500
+        return jsonify({'ok': True, 'data': result})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/analyze_batch', methods=['POST'])
+def analyze_batch():
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        chars = data.get('chars', [])
+        if not isinstance(chars, list):
+            return jsonify({'ok': False, 'error': 'chars must be array'}), 400
+        if len(chars) > 20:
+            return jsonify({'ok': False, 'error': 'Max 20 chars'}), 400
+        result = {}
+        for ch in chars:
+            ch = str(ch).strip()
+            if not ch or len(ch) != 1:
+                continue
+            if ch in result:
+                continue
+            analysis = analyze_char(ch)
+            if analysis:
+                result[ch] = analysis
+        return jsonify({'ok': True, 'data': result})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/test')
+def test_get():
+    try:
+        ch = request.args.get('char', '').strip()
+        html = render_test_page(ch)
+        return html
+    except Exception:
+        tb = traceback.format_exc()
+        return (
+            '<pre style="background:#fee;padding:20px;border-radius:8px;'
+            'overflow:auto;font-size:12px">' + tb + '</pre>'
+        ), 500
+
+
 @app.route('/')
 def index():
     return jsonify({
         'name': 'Chinese Vocab Analysis API',
-        'version': '1.3',
+        'version': '1.4',
         'endpoints': {
             'health': 'GET /health',
             'test': 'GET /test?char=权',
