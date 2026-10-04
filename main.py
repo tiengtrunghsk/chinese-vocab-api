@@ -268,10 +268,11 @@ a { color: #4f46e5; }
 
     rad = result.get('radical') or {}
     comps = result.get('components') or []
-    mnemonic = result.get('mnemonic') or '(Chưa có mẹo nhớ)'
+    mnemonic = result.get('mnemonic') or '(Chưa có mẹo nhớ cho chữ này)'
     similar = result.get('similar') or {}
     pinyin_str = result.get('pinyin') or ''
 
+    # ═══ Render components ═══
     comps_html = ''
     if comps:
         for c in comps:
@@ -285,6 +286,7 @@ a { color: #4f46e5; }
     else:
         comps_html = '<p style="color:#999;">Không có dữ liệu thành phần</p>'
 
+    # ═══ Render radical badge ═══
     rad_html = ''
     if rad:
         rad_html = (
@@ -297,8 +299,9 @@ a { color: #4f46e5; }
     else:
         rad_html = '<p style="color:#999;">Không xác định</p>'
 
+    # ═══ Render similar box — CHỈ khi mnemonic CHƯA có sẵn ═══
     similar_html = ''
-    if similar:
+    if similar and 'Dễ nhầm' not in mnemonic:
         sim_list = similar.get('similar') or []
         diff = similar.get('diff') or ''
         if sim_list:
@@ -315,6 +318,7 @@ a { color: #4f46e5; }
                 similar_html += '<div class="similar-diff">📌 ' + diff + '</div>'
             similar_html += '</div>'
 
+    # ═══ Escape mnemonic ═══
     mnemonic_escaped = (mnemonic
                         .replace('&', '&amp;')
                         .replace('<', '&lt;')
