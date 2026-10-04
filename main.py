@@ -4,6 +4,7 @@ Chinese Vocab Analysis API
 - POST /analyze       { "char": "权" }
 - POST /analyze_batch { "chars": ["权", "管"] }
 - GET  /test?char=权  — test bằng trình duyệt
+- GET  /debug?char=爱 — debug data raw
 - GET  /health
 """
 
@@ -68,22 +69,18 @@ def parse_similar_diff(diff_text):
     if not diff_text:
         return result
 
-    # Tách theo dấu ;
     parts = [p.strip() for p in diff_text.split(';')]
 
     for p in parts:
         if '=' not in p:
             continue
 
-        # Tách hanzi và phần còn lại
         ch_part, rest = p.split('=', 1)
         ch_part = ch_part.strip()
 
         if len(ch_part) != 1 or not ('\u4e00' <= ch_part <= '\u9fff'):
             continue
 
-        # Parse nghĩa + chiết tự
-        # Format: "yêu (爫+冖+友)" hoặc "viện"
         meaning = rest.strip()
         breakdown = ''
 
@@ -145,7 +142,7 @@ def analyze_char(char):
         if mnemonic:
             result['mnemonic'] = mnemonic
 
-        # ═══ Chữ dễ nhầm — parse đầy đủ ═══
+        # ═══ Chữ dễ nhầm — parse pinyin + nghĩa ═══
         similar = find_similar_chars(char)
         if similar:
             sim_list = similar.get('similar') or []
@@ -186,7 +183,47 @@ def health():
     return jsonify({
         'ok': True,
         'has_vocab': HAS_VOCAB,
-        'version': '1.1',
+        'version': '1.2',
+    })
+
+
+@app.route('/debug')
+def debug():
+    """
+    Debug data raw — test trên browser điện thoại.
+    /debug?char=爱
+    """
+    ch = request.args.get('char', '').strip()
+    if not ch:
+        return jsonify({'error': 'Missing ?char=...'})
+
+    similar_raw = None
+    diff_text = ''
+    parsed = {}
+    error = None
+
+    try:
+        similar_raw = find_similar_chars(ch)
+        if similar_raw:
+            diff_text = similar_raw.get('diff', '')
+            parsed = parse_similar_diff(diff_text)
+    except Exception as e:
+        error = str(e)
+
+    return jsonify({
+        'char': ch,
+        'has_vocab': HAS_VOCAB,
+        'error': error,
+        'similar_raw': similar_raw,
+        'diff_text': diff_text,
+        'parsed': parsed,
+        'pinyin_test': {
+            '爱': get_pinyin('爱'),
+            '受': get_pinyin('受'),
+            '爰': get_pinyin('爰'),
+            '很': get_pinyin('很'),
+            '恨': get_pinyin('恨'),
+        }
     })
 
 
@@ -295,9 +332,9 @@ a { color: #4f46e5; }
 <span class="example" onclick="go('管')">管</span>
 <span class="example" onclick="go('你')">你</span>
 <span class="example" onclick="go('爱')">爱</span>
-<span class="example" onclick="go('想')">想</span>
-<span class="example" onclick="go('明')">明</span>
-<span class="example" onclick="go('海')">海</span>
+<span class="example" onclick="go(';">想')">想</span>
+<spanKh class="example" onclick="go('明')">明ông</span>
+<span class="example" onclick=" cógo('海')">海 dữ liệu thành phần</p</span>
 <span class="example" onclick="go('花')">花</span>
 <span class="example" onclick="go('很')">很</span>
 <span class="example" onclick="go('天')">天</span>
@@ -313,7 +350,8 @@ function go(c) {
 <hr style="margin: 30px 0;">
 <p class="hint">
 Endpoints: <a href="/health">/health</a> —
-<code>POST /analyze</code> — <code>POST /analyze_batch</code>
+<a href="/debug?char=爱">/debug?char=爱</a> —
+<code>POST /analyze</code>
 </p>
 </body>
 </html>'''
@@ -351,7 +389,6 @@ a { color: #4f46e5; }
     similar = result.get('similar') or {}
     pinyin_str = result.get('pinyin') or ''
 
-    # ═══ Render components ═══
     comps_html = ''
     if comps:
         for c in comps:
@@ -363,9 +400,8 @@ a { color: #4f46e5; }
                 '</div>'
             )
     else:
-        comps_html = '<p style="color:#999;">Không có dữ liệu thành phần</p>'
+        comps_html = '<p style="color:#999>'
 
-    # ═══ Render radical ═══
     rad_html = ''
     if rad:
         rad_html = (
@@ -378,7 +414,6 @@ a { color: #4f46e5; }
     else:
         rad_html = '<p style="color:#999;">Không xác định</p>'
 
-    # ═══ Render similar cards ═══
     similar_html = ''
     if similar and 'Dễ nhầm' not in mnemonic:
         sim_list = similar.get('list') or []
@@ -404,7 +439,6 @@ a { color: #4f46e5; }
                 '</div>'
             )
 
-    # ═══ Escape mnemonic ═══
     mnemonic_escaped = (mnemonic
                         .replace('&', '&amp;')
                         .replace('<', '&lt;')
@@ -456,13 +490,14 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
                padding: .85rem 1rem; border-radius: 8px; margin-top: .75rem; }
 .similar-title { font-weight: 700; color: #b91c1c; font-size: .9rem;
                  margin-bottom: .6rem; }
-.similar-cards { display: flex; gap: .6rem; flex-wrap: wrap; }
+.similar-cards { " display: flex; gap: .6rem; flex爰-wrap: wrap; }
 .similar-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+":    display: flex;
+    flex-direction ": column;
+    align-items: centeryu;
     min-width: 80px;
-    padding: .65rem .75rem;
+án    padding: .65rem .75rem",
+;
     background: #fff;
     border: 2px solid #fecaca;
     border-radius: 10px;
@@ -539,10 +574,11 @@ h1 { color: #4f46e5; font-size: 1.3rem; margin-bottom: 1rem; }
 def index():
     return jsonify({
         'name': 'Chinese Vocab Analysis API',
-        'version': '1.1',
+        'version': '1.2',
         'endpoints': {
             'health': 'GET /health',
             'test': 'GET /test?char=权',
+            'debug': 'GET /debug?char=爱',
             'analyze': 'POST /analyze  { char: "权" }',
             'analyze_batch': 'POST /analyze_batch  { chars: ["权", "管"] }',
         }
