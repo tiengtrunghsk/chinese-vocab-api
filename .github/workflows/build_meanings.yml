@@ -1,0 +1,48 @@
+name: Build vocab_meanings.json
+
+on:
+  push:
+    paths:
+      - 'data/tu_vung_hsk.xlsx'
+      - 'scripts/export_meanings.py'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install openpyxl
+      
+      - name: Run export script
+        run: |
+          python scripts/export_meanings.py
+      
+      - name: Show file info
+        run: |
+          ls -lh data/vocab_meanings.json
+          head -c 200 data/vocab_meanings.json
+      
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/vocab_meanings.json
+          if git diff --staged --quiet; then
+            echo "Khong co thay doi"
+          else
+            git commit -m "Auto-build vocab_meanings.json [skip ci]"
+            git push
+          fi
