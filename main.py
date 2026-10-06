@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Chinese Vocab Analysis API — có AI mnemonics + tự động reload"""
+"""Chinese Vocab Analysis API"""
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pypinyin import pinyin, Style
 import os
-import re
-import sys
 import json
-import time
+import sys
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,29 +14,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 HAS_VOCAB = False
 try:
     from vocab_data.radical_analyzer import (
-        analyze_word, _split_components, get_radical_for_word
+        _split_components, get_radical_for_word
     )
-    from vocab_data.mnemonic_generator import (
-        generate_mnemonic, find_similar_chars
-    )
+    from vocab_data.mnemonic_generator import generate_mnemonic
     HAS_VOCAB = True
     print("[VocabAPI] vocab_data loaded OK")
 except Exception as e:
     print("[VocabAPI] vocab_data load failed: " + str(e))
 
 
-# ═══════════════════════════════════════════════════════════════
-#  ⭐ AI MNEMONICS — LOAD + TỰ ĐỘNG RELOAD KHI FILE ĐỔI
-# ═══════════════════════════════════════════════════════════════
-_AI_MNEMONICS = {}          # Dict gốc từ file JSON
-_AI_MNEMONICS_INDEX = {}    # Index zh → mnemonic (để lookup nhanh)
-_AI_MNEMONICS_PATH = None   # Đường dẫn file đã load
-_AI_MNEMONICS_MTIME = 0     # Lần cuối file thay đổi
+_AI_MNEMONICS = {}
+_AI_MNEMONICS_INDEX = {}
+_AI_MNEMONICS_PATH = None
+_AI_MNEMONICS_MTIME = 0
 _AI_MNEMONICS_LOADED = False
 
 
 def _find_ai_mnemonics_file():
-    """Tìm file ai_mnemonics.json ở các vị trí có thể."""
     here = os.path.dirname(os.path.abspath(__file__))
     parent = os.path.dirname(here)
     candidates = [
@@ -56,7 +48,6 @@ def _find_ai_mnemonics_file():
 
 
 def _build_ai_index(data):
-    """Build index zh → mnemonic từ dict gốc (key format: HSK|stt|zh)."""
     idx = {}
     for k, v in data.items():
         parts = k.split("|")
@@ -65,20 +56,12 @@ def _build_ai_index(data):
         zh = parts[2].strip()
         if not zh:
             continue
-        # Ưu tiên HSK thấp (entry đầu tiên gặp)
         if zh not in idx:
             idx[zh] = v
     return idx
 
 
 def _do_load_ai_mnemonics():
-    """
-    Đọc file + build index. Trả về True/False.
-    Gọi khi:
-      - Server khởi động
-      - File bị thay đổi (mtime)
-      - Endpoint /reload được gọi
-    """
     global _AI_MNEMONICS, _AI_MNEMONICS_INDEX
     global _AI_MNEMONICS_PATH, _AI_MNEMONICS_MTIME, _AI_MNEMONICS_LOADED
 
@@ -89,14 +72,13 @@ def _do_load_ai_mnemonics():
         _AI_MNEMONICS_PATH = None
         _AI_MNEMONICS_MTIME = 0
         _AI_MNEMONICS_LOADED = True
-        print("[VocabAPI] [INFO] Khong co ai_mnemonics.json - dung meo tinh")
+        print("[VocabAPI] [INFO] Khong co ai_mnemonics.json")
         return False
 
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            print("[VocabAPI] [WARN] ai_mnemonics.json khong phai dict")
             return False
 
         _AI_MNEMONICS = data
@@ -105,8 +87,7 @@ def _do_load_ai_mnemonics():
         _AI_MNEMONICS_MTIME = os.path.getmtime(path)
         _AI_MNEMONICS_LOADED = True
 
-        print("[VocabAPI] [OK] Load " + str(len(data))
-              + " meo nho AI tu: " + path)
+        print("[VocabAPI] [OK] Load " + str(len(data)) + " meo nho AI")
         print("[VocabAPI] [OK] Index: " + str(len(_AI_MNEMONICS_INDEX)) + " chu")
         return True
     except Exception as e:
@@ -115,70 +96,171 @@ def _do_load_ai_mnemonics():
 
 
 def load_ai_mnemonics():
-    """Load lần đầu khi server khởi động."""
     _do_load_ai_mnemonics()
 
 
 def _check_ai_mnemonics_fresh():
-    """
-    ⭐ Kiểm tra mtime mỗi khi gọi get_ai_mnemonic.
-    Nếu file mới hơn → tự động reload.
-    ⭐ Nhanh (chỉ os.stat) — không đọc file nếu không có gì đổi.
-    """
     if not _AI_MNEMONICS_LOADED:
         _do_load_ai_mnemonics()
         return
 
     path = _AI_MNEMONICS_PATH
 
-    # Trường hợp 1: chưa có file nào được load
     if not path:
         new_path = _find_ai_mnemonics_file()
         if new_path:
-            print("[VocabAPI] [NEW] File xuat hien: " + new_path)
             _do_load_ai_mnemonics()
         return
 
-    # Trường hợp 2: file đã load nhưng bị xóa
     if not os.path.exists(path):
-        print("[VocabAPI] [DELETED] File bi xoa: " + path)
         _do_load_ai_mnemonics()
         return
 
-    # Trường hợp 3: file tồn tại — check mtime
     try:
         current_mtime = os.path.getmtime(path)
         if current_mtime > _AI_MNEMONICS_MTIME:
-            print("[VocabAPI] [RELOAD] File thay doi, reload lai...")
             _do_load_ai_mnemonics()
     except Exception:
         pass
 
 
 def get_ai_mnemonic(char):
-    """Lấy mẹo nhớ AI cho 1 chữ Hán. Tự động reload nếu file đổi."""
     _check_ai_mnemonics_fresh()
-
     if not _AI_MNEMONICS_INDEX:
         return ""
-
     char = str(char or "").strip()
     if not char:
         return ""
-
     return _AI_MNEMONICS_INDEX.get(char, "")
+
+
+_VOCAB_MEANINGS = {}
+_VOCAB_MEANINGS_PATH = None
+_VOCAB_MEANINGS_MTIME = 0
+
+
+def _find_vocab_meanings_file():
+    here = os.path.dirname(os.path.abspath(__file__))
+    parent = os.path.dirname(here)
+    candidates = [
+        os.path.join(here, "data", "vocab_meanings.json"),
+        os.path.join(here, "vocab_data", "vocab_meanings.json"),
+        os.path.join(parent, "data", "vocab_meanings.json"),
+        "data/vocab_meanings.json",
+        "vocab_data/vocab_meanings.json",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _do_load_vocab_meanings():
+    global _VOCAB_MEANINGS, _VOCAB_MEANINGS_PATH, _VOCAB_MEANINGS_MTIME
+    path = _find_vocab_meanings_file()
+    if not path:
+        _VOCAB_MEANINGS = {}
+        _VOCAB_MEANINGS_PATH = None
+        _VOCAB_MEANINGS_MTIME = 0
+        print("[VocabAPI] [INFO] Khong co vocab_meanings.json")
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _VOCAB_MEANINGS = data
+            _VOCAB_MEANINGS_PATH = path
+            _VOCAB_MEANINGS_MTIME = os.path.getmtime(path)
+            print("[VocabAPI] [OK] Load " + str(len(data)) + " nghia tu")
+            return True
+    except Exception as e:
+        print("[VocabAPI] [WARN] Loi doc vocab_meanings.json: " + str(e))
+    return False
+
+
+def get_meaning(char):
+    if not char:
+        return ""
+    return _VOCAB_MEANINGS.get(char, "")
+
+
+def _check_vocab_meanings_fresh():
+    path = _VOCAB_MEANINGS_PATH
+    if not path:
+        new_path = _find_vocab_meanings_file()
+        if new_path:
+            _do_load_vocab_meanings()
+        return
+    if not os.path.exists(path):
+        _do_load_vocab_meanings()
+        return
+    try:
+        if os.path.getmtime(path) > _VOCAB_MEANINGS_MTIME:
+            _do_load_vocab_meanings()
+    except Exception:
+        pass
+
+
+_SIMILAR_CHARS = {}
+_SIMILAR_CHARS_LOADED = False
+
+
+def _do_load_similar_chars():
+    global _SIMILAR_CHARS, _SIMILAR_CHARS_LOADED
+    if _SIMILAR_CHARS_LOADED:
+        return
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    folder = os.path.join(here, "vocab_data")
+    if not os.path.isdir(folder):
+        _SIMILAR_CHARS_LOADED = True
+        return
+
+    total = 0
+    for fname in sorted(os.listdir(folder)):
+        if fname.startswith("similar_chars") and fname.endswith(".json"):
+            path = os.path.join(folder, fname)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    _SIMILAR_CHARS.update(data)
+                    total += len(data)
+                    print("[VocabAPI] [OK] Load " + str(len(data))
+                          + " similar chars tu " + fname)
+            except Exception as e:
+                print("[VocabAPI] [WARN] Loi doc " + fname + ": " + str(e))
+
+    _SIMILAR_CHARS_LOADED = True
+    print("[VocabAPI] [OK] Tong similar chars: " + str(total))
+
+
+def get_similar_chars(char):
+    if not char:
+        return [], ""
+    entry = _SIMILAR_CHARS.get(char)
+    if not entry:
+        return [], ""
+
+    if isinstance(entry, list):
+        return [str(c).strip() for c in entry if c], ""
+
+    if isinstance(entry, dict):
+        chars = entry.get('similar', []) or []
+        diff = entry.get('diff', '') or ''
+        return [str(c).strip() for c in chars if c], diff
+
+    return [], ""
 
 
 app = Flask(__name__)
 CORS(app)
 
-# ⭐ Load AI mnemonics 1 lần khi khởi động
 load_ai_mnemonics()
+_do_load_vocab_meanings()
+_do_load_similar_chars()
 
 
-# ═══════════════════════════════════════════════════════════════
-#  HELPERS
-# ═══════════════════════════════════════════════════════════════
 def get_pinyin(char):
     if not char:
         return ''
@@ -191,47 +273,6 @@ def get_pinyin(char):
     return ''
 
 
-def parse_similar_diff(diff_text):
-    result = {}
-    if not diff_text:
-        return result
-    parts = [p.strip() for p in diff_text.split(';')]
-    for p in parts:
-        if '=' not in p:
-            continue
-        ch_part, rest = p.split('=', 1)
-        ch_part = ch_part.strip()
-        if len(ch_part) != 1:
-            continue
-        if not ('\u4e00' <= ch_part <= '\u9fff'):
-            continue
-        meaning = rest.strip()
-        breakdown = ''
-        m = re.match(r'^([^(]+?)\s*\(([^)]+)\)\s*$', rest.strip())
-        if m:
-            meaning = m.group(1).strip()
-            breakdown = m.group(2).strip()
-        else:
-            meaning = rest.strip()
-        result[ch_part] = {
-            'meaning': meaning,
-            'breakdown': breakdown,
-        }
-    return result
-
-
-def strip_similar_from_mnemonic(mnemonic):
-    if not mnemonic:
-        return mnemonic
-    markers = ['\n🔍', '\n📌', '\n\n🔍', '\n\n📌']
-    cut_idx = len(mnemonic)
-    for marker in markers:
-        idx = mnemonic.find(marker)
-        if idx != -1 and idx < cut_idx:
-            cut_idx = idx
-    return mnemonic[:cut_idx].rstrip()
-
-
 def analyze_char(char):
     if not char or len(char) != 1:
         return None
@@ -241,6 +282,11 @@ def analyze_char(char):
         return None
     try:
         result = {'char': char, 'pinyin': get_pinyin(char)}
+
+        _check_vocab_meanings_fresh()
+        vi = get_meaning(char)
+        if vi:
+            result['vi'] = vi
 
         main_rad = get_radical_for_word(char)
         if main_rad:
@@ -263,36 +309,30 @@ def analyze_char(char):
                     'position': c.get('position', ''),
                 })
 
-        # ⭐ CHỈ SỬA CHỖ NÀY: Ưu tiên AI, không có thì fallback y như cũ
         mnemonic = get_ai_mnemonic(char)
         if not mnemonic:
             mnemonic = generate_mnemonic(char)
-
         if mnemonic:
-            mnemonic = strip_similar_from_mnemonic(mnemonic)
             result['mnemonic'] = mnemonic
 
-        similar = find_similar_chars(char)
-        if similar:
-            sim_list = similar.get('similar') or []
-            diff = similar.get('diff') or ''
-            parsed = parse_similar_diff(diff)
+        sim_chars, diff_text = get_similar_chars(char)
+        if sim_chars:
             similar_full = []
-            for ch in sim_list:
-                ch = str(ch).strip()
-                if not ch or len(ch) != 1:
+            for c in sim_chars:
+                if not c or len(c) != 1:
                     continue
-                info = parsed.get(ch, {})
+                c_vi = get_meaning(c)
                 similar_full.append({
-                    'char': ch,
-                    'pinyin': get_pinyin(ch),
-                    'meaning': info.get('meaning', ''),
-                    'breakdown': info.get('breakdown', ''),
+                    'char': c,
+                    'pinyin': get_pinyin(c),
+                    'meaning': c_vi,
+                    'breakdown': '',
                 })
-            result['similar'] = {
-                'list': similar_full,
-                'diff': diff,
-            }
+            if similar_full:
+                result['similar'] = {
+                    'list': similar_full,
+                    'diff': diff_text,
+                }
 
         return result
     except Exception as e:
@@ -300,11 +340,7 @@ def analyze_char(char):
         return None
 
 
-# ═══════════════════════════════════════════════════════════════
-#  HTML HELPER — giữ nguyên như bản gốc
-# ═══════════════════════════════════════════════════════════════
 def render_test_page(ch):
-    """Render trang /test — tách riêng để bọc try/except."""
     if not ch:
         return '''<!DOCTYPE html>
 <html>
@@ -324,13 +360,13 @@ a{color:#4f46e5}
 </style>
 </head>
 <body>
-<h1>🔍 Chinese Vocab API Test</h1>
-<p>Nhập 1 chữ Hán để phân tích:</p>
+<h1>Chinese Vocab API Test</h1>
+<p>Nhap 1 chu Han de phan tich:</p>
 <form method="GET" action="/test">
 <input type="text" name="char" placeholder="VD: 权" maxlength="1" autofocus>
-<button type="submit">Phân tích</button>
+<button type="submit">Phan tich</button>
 </form>
-<p class="hint">Hoặc bấm thử:</p>
+<p class="hint">Hoac bam thu:</p>
 <div>
 <span class="example" onclick="go('权')">权</span>
 <span class="example" onclick="go('管')">管</span>
@@ -343,23 +379,24 @@ a{color:#4f46e5}
 </div>
 <script>function go(c){document.querySelector('input').value=c;document.querySelector('form').submit();}</script>
 <hr style="margin:30px 0">
-<p class="hint">Endpoints: <a href="/health">/health</a> — <a href="/debug?char=爱">/debug</a></p>
+<p class="hint">Endpoints: <a href="/health">/health</a> - <a href="/debug?char=爱">/debug</a></p>
 </body>
 </html>'''
 
     if len(ch) != 1:
-        return '<h1>Chỉ nhập 1 ký tự</h1><p><a href="/test">← Quay lại</a></p>'
+        return '<h1>Chi nhap 1 ky tu</h1><p><a href="/test">Quay lai</a></p>'
 
     result = analyze_char(ch)
 
     if not result:
-        return '<h1>❌ Không phân tích được: ' + ch + '</h1><p><a href="/test">← Thử chữ khác</a></p>'
+        return '<h1>Khong phan tich duoc: ' + ch + '</h1><p><a href="/test">Thu chu khac</a></p>'
 
     rad = result.get('radical') or {}
     comps = result.get('components') or []
-    mnemonic = result.get('mnemonic') or '(Chưa có mẹo nhớ)'
+    mnemonic = result.get('mnemonic') or '(Chua co meo nho)'
     similar = result.get('similar') or {}
     pinyin_str = result.get('pinyin') or ''
+    vi_str = result.get('vi') or ''
 
     comps_html = ''
     for c in comps:
@@ -371,18 +408,18 @@ a{color:#4f46e5}
             '</div>'
         )
     if not comps_html:
-        comps_html = '<p style="color:#999">Không có dữ liệu</p>'
+        comps_html = '<p style="color:#999">Khong co du lieu</p>'
 
     if rad:
         rad_html = (
             '<div class="radical-box">'
             '<span class="rad-char">' + (rad.get('zh') or '') + '</span>'
-            '<span class="rad-name">Bộ ' + (rad.get('pinyin') or '') + '</span>'
+            '<span class="rad-name">Bo ' + (rad.get('pinyin') or '') + '</span>'
             '<span class="rad-meaning">' + (rad.get('meaning') or '') + '</span>'
             '</div>'
         )
     else:
-        rad_html = '<p style="color:#999">Không xác định</p>'
+        rad_html = '<p style="color:#999">Khong xac dinh</p>'
 
     similar_html = ''
     sim_list = similar.get('list') or []
@@ -403,7 +440,7 @@ a{color:#4f46e5}
             )
         similar_html = (
             '<div class="similar-box">'
-            '<div class="similar-title">🔍 Dễ nhầm</div>'
+            '<div class="similar-title">De nham</div>'
             '<div class="similar-cards">' + cards_html + '</div>'
             '</div>'
         )
@@ -419,12 +456,13 @@ a{color:#4f46e5}
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Phân tích: ''' + ch + '''</title>
+<title>Phan tich: ''' + ch + '''</title>
 <style>
 body{font-family:-apple-system,sans-serif;max-width:700px;margin:30px auto;padding:0 20px;background:#f9fafb;color:#111827;line-height:1.5}
 h1{color:#4f46e5;font-size:1.3rem}
 .main-char{font-size:5rem;font-weight:700;text-align:center;font-family:"PingFang SC","Microsoft YaHei",sans-serif;margin:1rem 0 .25rem;line-height:1}
-.main-pinyin{text-align:center;font-size:1.3rem;font-style:italic;color:#6b7280;margin-bottom:1.5rem}
+.main-pinyin{text-align:center;font-size:1.3rem;font-style:italic;color:#6b7280;margin-bottom:.25rem}
+.main-vi{text-align:center;font-size:1rem;color:#374151;margin-bottom:1.5rem}
 .section{background:#fff;border-radius:12px;padding:1rem 1.25rem;margin-bottom:1rem;box-shadow:0 1px 3px rgba(0,0,0,.06)}
 .section-title{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;margin-bottom:.75rem}
 .radical-box{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
@@ -449,30 +487,28 @@ h1{color:#4f46e5;font-size:1.3rem}
 </style>
 </head>
 <body>
-<h1>🔍 Kết quả phân tích</h1>
+<h1>Ket qua phan tich</h1>
 <div class="main-char">''' + ch + '''</div>
 <div class="main-pinyin">''' + pinyin_str + '''</div>
+<div class="main-vi">''' + vi_str + '''</div>
 <div class="section">
-<div class="section-title">Bộ thủ chính</div>
+<div class="section-title">Bo thu chinh</div>
 ''' + rad_html + '''
 </div>
 <div class="section">
-<div class="section-title">Thành phần cấu tạo</div>
+<div class="section-title">Thanh phan cau tao</div>
 ''' + comps_html + '''
 </div>
 <div class="section">
-<div class="section-title">Mẹo nhớ</div>
+<div class="section-title">Meo nho</div>
 <div class="mnemonic-box">''' + mnem_esc + '''</div>
 ''' + similar_html + '''
 </div>
-<a href="/test" class="back-btn">← Phân tích chữ khác</a>
+<a href="/test" class="back-btn">Phan tich chu khac</a>
 </body>
 </html>'''
 
 
-# ═══════════════════════════════════════════════════════════════
-#  ROUTES
-# ═══════════════════════════════════════════════════════════════
 @app.route('/health')
 def health():
     return jsonify({
@@ -482,23 +518,25 @@ def health():
         'ai_index_size': len(_AI_MNEMONICS_INDEX),
         'ai_file_path': _AI_MNEMONICS_PATH,
         'ai_file_mtime': _AI_MNEMONICS_MTIME,
-        'version': '1.5',
+        'vocab_meanings_loaded': len(_VOCAB_MEANINGS),
+        'vocab_meanings_path': _VOCAB_MEANINGS_PATH,
+        'similar_chars_loaded': len(_SIMILAR_CHARS),
+        'version': '1.6',
     })
 
 
 @app.route('/reload', methods=['POST', 'GET'])
 def reload_ai():
-    """
-    ⭐ Force reload ai_mnemonics.json mà không cần restart server.
-    Gọi: POST /reload  hoặc  GET /reload
-    """
     ok = _do_load_ai_mnemonics()
+    _do_load_vocab_meanings()
     return jsonify({
         'ok': ok,
         'count': len(_AI_MNEMONICS),
         'index_size': len(_AI_MNEMONICS_INDEX),
         'path': _AI_MNEMONICS_PATH,
         'mtime': _AI_MNEMONICS_MTIME,
+        'meanings_count': len(_VOCAB_MEANINGS),
+        'similar_count': len(_SIMILAR_CHARS),
     })
 
 
@@ -508,41 +546,29 @@ def debug():
         ch = request.args.get('char', '').strip()
         if not ch:
             return jsonify({'error': 'Missing ?char=...'})
-        similar_raw = None
-        diff_text = ''
-        parsed = {}
-        mnemonic_raw = ''
-        mnemonic_stripped = ''
-        ai_mnemonic = ''
-        static_mnemonic = ''
-        error = None
-        try:
-            similar_raw = find_similar_chars(ch)
-            if similar_raw:
-                diff_text = similar_raw.get('diff', '')
-                parsed = parse_similar_diff(diff_text)
 
-            # Lấy cả 2 nguồn để so sánh
-            ai_mnemonic = get_ai_mnemonic(ch) or ''
-            static_mnemonic = generate_mnemonic(ch) or ''
+        _check_vocab_meanings_fresh()
 
-            mnemonic_raw = ai_mnemonic if ai_mnemonic else static_mnemonic
-            mnemonic_stripped = strip_similar_from_mnemonic(mnemonic_raw)
-        except Exception as e:
-            error = str(e)
+        ai_mnemonic = get_ai_mnemonic(ch) or ''
+        static_mnemonic = generate_mnemonic(ch) or ''
+        sim_chars, diff_text = get_similar_chars(ch)
+        vi = get_meaning(ch)
+        analysis = analyze_char(ch) or {}
+
         return jsonify({
             'char': ch,
             'has_vocab': HAS_VOCAB,
-            'error': error,
-            'similar_raw': similar_raw,
-            'diff_text': diff_text,
-            'parsed': parsed,
-            'mnemonic_ai': ai_mnemonic,
-            'mnemonic_static': static_mnemonic,
-            'mnemonic_raw': mnemonic_raw,
-            'mnemonic_stripped': mnemonic_stripped,
+            'vi': vi,
+            'ai_mnemonic': ai_mnemonic,
+            'static_mnemonic': static_mnemonic,
+            'mnemonic_raw': ai_mnemonic if ai_mnemonic else static_mnemonic,
+            'similar_chars': sim_chars,
+            'similar_diff': diff_text,
+            'full_analysis': analysis,
             'ai_count': len(_AI_MNEMONICS),
             'ai_index_size': len(_AI_MNEMONICS_INDEX),
+            'meanings_count': len(_VOCAB_MEANINGS),
+            'similar_count': len(_SIMILAR_CHARS),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -609,12 +635,14 @@ def test_get():
 def index():
     return jsonify({
         'name': 'Chinese Vocab Analysis API',
-        'version': '1.5',
+        'version': '1.6',
         'ai_mnemonics_loaded': len(_AI_MNEMONICS),
         'ai_index_size': len(_AI_MNEMONICS_INDEX),
+        'vocab_meanings_loaded': len(_VOCAB_MEANINGS),
+        'similar_chars_loaded': len(_SIMILAR_CHARS),
         'endpoints': {
             'health': 'GET /health',
-            'reload': 'POST /reload  (force reload ai_mnemonics.json)',
+            'reload': 'POST /reload',
             'test': 'GET /test?char=权',
             'debug': 'GET /debug?char=爱',
             'analyze': 'POST /analyze  { char: "权" }',
