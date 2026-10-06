@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Chinese Vocab Analysis API"""
+"""Chinese Vocab Analysis API — có AI mnemonics + tự động reload"""
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -7,6 +7,8 @@ from pypinyin import pinyin, Style
 import os
 import re
 import sys
+import json
+import time
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -25,10 +27,158 @@ except Exception as e:
     print("[VocabAPI] vocab_data load failed: " + str(e))
 
 
+# ═══════════════════════════════════════════════════════════════
+#  ⭐ AI MNEMONICS — LOAD + TỰ ĐỘNG RELOAD KHI FILE ĐỔI
+# ═══════════════════════════════════════════════════════════════
+_AI_MNEMONICS = {}          # Dict gốc từ file JSON
+_AI_MNEMONICS_INDEX = {}    # Index zh → mnemonic (để lookup nhanh)
+_AI_MNEMONICS_PATH = None   # Đường dẫn file đã load
+_AI_MNEMONICS_MTIME = 0     # Lần cuối file thay đổi
+_AI_MNEMONICS_LOADED = False
+
+
+def _find_ai_mnemonics_file():
+    """Tìm file ai_mnemonics.json ở các vị trí có thể."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    parent = os.path.dirname(here)
+    candidates = [
+        os.path.join(here, "data", "ai_mnemonics.json"),
+        os.path.join(parent, "data", "ai_mnemonics.json"),
+        os.path.join(os.getcwd(), "data", "ai_mnemonics.json"),
+        "data/ai_mnemonics.json",
+        os.path.join(here, "ai_mnemonics.json"),
+        "ai_mnemonics.json",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def _build_ai_index(data):
+    """Build index zh → mnemonic từ dict gốc (key format: HSK|stt|zh)."""
+    idx = {}
+    for k, v in data.items():
+        parts = k.split("|")
+        if len(parts) != 3:
+            continue
+        zh = parts[2].strip()
+        if not zh:
+            continue
+        # Ưu tiên HSK thấp (entry đầu tiên gặp)
+        if zh not in idx:
+            idx[zh] = v
+    return idx
+
+
+def _do_load_ai_mnemonics():
+    """
+    Đọc file + build index. Trả về True/False.
+    Gọi khi:
+      - Server khởi động
+      - File bị thay đổi (mtime)
+      - Endpoint /reload được gọi
+    """
+    global _AI_MNEMONICS, _AI_MNEMONICS_INDEX
+    global _AI_MNEMONICS_PATH, _AI_MNEMONICS_MTIME, _AI_MNEMONICS_LOADED
+
+    path = _find_ai_mnemonics_file()
+    if not path:
+        _AI_MNEMONICS = {}
+        _AI_MNEMONICS_INDEX = {}
+        _AI_MNEMONICS_PATH = None
+        _AI_MNEMONICS_MTIME = 0
+        _AI_MNEMONICS_LOADED = True
+        print("[VocabAPI] [INFO] Khong co ai_mnemonics.json - dung meo tinh")
+        return False
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            print("[VocabAPI] [WARN] ai_mnemonics.json khong phai dict")
+            return False
+
+        _AI_MNEMONICS = data
+        _AI_MNEMONICS_INDEX = _build_ai_index(data)
+        _AI_MNEMONICS_PATH = path
+        _AI_MNEMONICS_MTIME = os.path.getmtime(path)
+        _AI_MNEMONICS_LOADED = True
+
+        print("[VocabAPI] [OK] Load " + str(len(data))
+              + " meo nho AI tu: " + path)
+        print("[VocabAPI] [OK] Index: " + str(len(_AI_MNEMONICS_INDEX)) + " chu")
+        return True
+    except Exception as e:
+        print("[VocabAPI] [WARN] Loi doc ai_mnemonics.json: " + str(e))
+        return False
+
+
+def load_ai_mnemonics():
+    """Load lần đầu khi server khởi động."""
+    _do_load_ai_mnemonics()
+
+
+def _check_ai_mnemonics_fresh():
+    """
+    ⭐ Kiểm tra mtime mỗi khi gọi get_ai_mnemonic.
+    Nếu file mới hơn → tự động reload.
+    ⭐ Nhanh (chỉ os.stat) — không đọc file nếu không có gì đổi.
+    """
+    if not _AI_MNEMONICS_LOADED:
+        _do_load_ai_mnemonics()
+        return
+
+    path = _AI_MNEMONICS_PATH
+
+    # Trường hợp 1: chưa có file nào được load
+    if not path:
+        new_path = _find_ai_mnemonics_file()
+        if new_path:
+            print("[VocabAPI] [NEW] File xuat hien: " + new_path)
+            _do_load_ai_mnemonics()
+        return
+
+    # Trường hợp 2: file đã load nhưng bị xóa
+    if not os.path.exists(path):
+        print("[VocabAPI] [DELETED] File bi xoa: " + path)
+        _do_load_ai_mnemonics()
+        return
+
+    # Trường hợp 3: file tồn tại — check mtime
+    try:
+        current_mtime = os.path.getmtime(path)
+        if current_mtime > _AI_MNEMONICS_MTIME:
+            print("[VocabAPI] [RELOAD] File thay doi, reload lai...")
+            _do_load_ai_mnemonics()
+    except Exception:
+        pass
+
+
+def get_ai_mnemonic(char):
+    """Lấy mẹo nhớ AI cho 1 chữ Hán. Tự động reload nếu file đổi."""
+    _check_ai_mnemonics_fresh()
+
+    if not _AI_MNEMONICS_INDEX:
+        return ""
+
+    char = str(char or "").strip()
+    if not char:
+        return ""
+
+    return _AI_MNEMONICS_INDEX.get(char, "")
+
+
 app = Flask(__name__)
 CORS(app)
 
+# ⭐ Load AI mnemonics 1 lần khi khởi động
+load_ai_mnemonics()
 
+
+# ═══════════════════════════════════════════════════════════════
+#  HELPERS
+# ═══════════════════════════════════════════════════════════════
 def get_pinyin(char):
     if not char:
         return ''
@@ -113,7 +263,11 @@ def analyze_char(char):
                     'position': c.get('position', ''),
                 })
 
-        mnemonic = generate_mnemonic(char)
+        # ⭐ CHỈ SỬA CHỖ NÀY: Ưu tiên AI, không có thì fallback y như cũ
+        mnemonic = get_ai_mnemonic(char)
+        if not mnemonic:
+            mnemonic = generate_mnemonic(char)
+
         if mnemonic:
             mnemonic = strip_similar_from_mnemonic(mnemonic)
             result['mnemonic'] = mnemonic
@@ -147,7 +301,7 @@ def analyze_char(char):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  HTML HELPER
+#  HTML HELPER — giữ nguyên như bản gốc
 # ═══════════════════════════════════════════════════════════════
 def render_test_page(ch):
     """Render trang /test — tách riêng để bọc try/except."""
@@ -324,7 +478,27 @@ def health():
     return jsonify({
         'ok': True,
         'has_vocab': HAS_VOCAB,
-        'version': '1.4',
+        'ai_mnemonics_loaded': len(_AI_MNEMONICS),
+        'ai_index_size': len(_AI_MNEMONICS_INDEX),
+        'ai_file_path': _AI_MNEMONICS_PATH,
+        'ai_file_mtime': _AI_MNEMONICS_MTIME,
+        'version': '1.5',
+    })
+
+
+@app.route('/reload', methods=['POST', 'GET'])
+def reload_ai():
+    """
+    ⭐ Force reload ai_mnemonics.json mà không cần restart server.
+    Gọi: POST /reload  hoặc  GET /reload
+    """
+    ok = _do_load_ai_mnemonics()
+    return jsonify({
+        'ok': ok,
+        'count': len(_AI_MNEMONICS),
+        'index_size': len(_AI_MNEMONICS_INDEX),
+        'path': _AI_MNEMONICS_PATH,
+        'mtime': _AI_MNEMONICS_MTIME,
     })
 
 
@@ -339,13 +513,20 @@ def debug():
         parsed = {}
         mnemonic_raw = ''
         mnemonic_stripped = ''
+        ai_mnemonic = ''
+        static_mnemonic = ''
         error = None
         try:
             similar_raw = find_similar_chars(ch)
             if similar_raw:
                 diff_text = similar_raw.get('diff', '')
                 parsed = parse_similar_diff(diff_text)
-            mnemonic_raw = generate_mnemonic(ch) or ''
+
+            # Lấy cả 2 nguồn để so sánh
+            ai_mnemonic = get_ai_mnemonic(ch) or ''
+            static_mnemonic = generate_mnemonic(ch) or ''
+
+            mnemonic_raw = ai_mnemonic if ai_mnemonic else static_mnemonic
             mnemonic_stripped = strip_similar_from_mnemonic(mnemonic_raw)
         except Exception as e:
             error = str(e)
@@ -356,8 +537,12 @@ def debug():
             'similar_raw': similar_raw,
             'diff_text': diff_text,
             'parsed': parsed,
+            'mnemonic_ai': ai_mnemonic,
+            'mnemonic_static': static_mnemonic,
             'mnemonic_raw': mnemonic_raw,
             'mnemonic_stripped': mnemonic_stripped,
+            'ai_count': len(_AI_MNEMONICS),
+            'ai_index_size': len(_AI_MNEMONICS_INDEX),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -424,9 +609,12 @@ def test_get():
 def index():
     return jsonify({
         'name': 'Chinese Vocab Analysis API',
-        'version': '1.4',
+        'version': '1.5',
+        'ai_mnemonics_loaded': len(_AI_MNEMONICS),
+        'ai_index_size': len(_AI_MNEMONICS_INDEX),
         'endpoints': {
             'health': 'GET /health',
+            'reload': 'POST /reload  (force reload ai_mnemonics.json)',
             'test': 'GET /test?char=权',
             'debug': 'GET /debug?char=爱',
             'analyze': 'POST /analyze  { char: "权" }',
