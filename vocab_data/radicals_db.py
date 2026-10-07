@@ -275,6 +275,12 @@ SIMPLIFIED_VARIANTS = {
     "刂": "刀",   # Dao — 别 到 划 刻
     "亻": "人",   # Người — 你 他 休 位
     "冫": "冫",   # Băng đá (biến thể của 冰)
+
+    # ═══ Biến thể mới bổ sung ═══
+    "攵": "攴",   # Đánh nhẹ — 收 故 教 数 整 敬 救 散 敷
+    "乛": "乙",   # Nét sổ cong — 买
+    "礻": "示",   # Chỉ bảo — 礼 祝 神 福
+    "衤": "衣",   # Áo — 裸 补 衬 袖
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -303,6 +309,12 @@ VARIANT_MEANINGS = {
     "刂": "Dao (biến thể của 刀)",
     "亻": "Người (biến thể của 人)",
     "冫": "Băng đá (biến thể của 冰)",
+
+    # ═══ Biến thể mới bổ sung ═══
+    "攵": "Đánh nhẹ (biến thể của 攴)",
+    "乛": "Nét sổ cong (biến thể của 乙)",
+    "礻": "Chỉ bảo (biến thể của 示)",
+    "衤": "Áo (biến thể của 衣)",
 }
 
 
